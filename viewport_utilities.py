@@ -14,8 +14,8 @@ class ViewportHelper:
         self.scale = scale
     
         self.viewport_diagonal = self.view.CropBox.Max.Subtract(self.view.CropBox.Min).Divide(self.scale)
-        print("cb max:", self.view.CropBox.Max.ToString(), "cb min:", self.view.CropBox.Min.ToString())
-        print(self.view.Name, "diagonal: ", self.viewport_diagonal.ToString())
+        # print("cb max:", self.view.CropBox.Max.ToString(), "cb min:", self.view.CropBox.Min.ToString())
+        # print(self.view.Name, "diagonal: ", self.viewport_diagonal.ToString())
         self.viewport_half_diagonal = self.viewport_diagonal.Divide(2)
         self.viewport_placement = XYZ_element_multiply(self.viewport_half_diagonal, XYZ(-1,1,0))
         
@@ -37,3 +37,17 @@ class ViewportHelper:
         # print("vp_ref: ", self.viewport_ref.ToString())
         # print("vp_placement: ", self.viewport_placement.ToString())
         return Viewport.Create(doc, sheet.Id, self.view.Id, self.viewport_origin)
+
+def iterate_sheet_number(initial_sheet):
+    """
+    A Generator to create successive sheet numbers (as strings) based on initial sheet number.
+    
+    Assumes hyphen separating alpha prefix and numeric portion - ex: "A-100". 
+    Numeric portion assumed to be integer, not decimal or number with letter suffix.
+    """
+    alpha_prefix = initial_sheet.split("-")[0]
+    numeric = int(initial_sheet.split("-")[-1])
+    while True:
+        sheet_number = "{a}-{n}".format(a = alpha_prefix, n = numeric)
+        yield sheet_number
+        numeric += 1
