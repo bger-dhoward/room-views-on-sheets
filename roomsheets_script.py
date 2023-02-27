@@ -18,7 +18,7 @@ import wpf
 from System import Windows
 from System.Collections.Generic import IList, List
 
-from xyz_utilities import XYZ_element_multiply, translate_X, translate_Y
+from xyz_utilities import XYZ_element_multiply, translate_X, translate_Y, get_shape_from_boundingbox, threeD_cropbox_from_room
 from viewport_utilities import ViewportHelper
 
 doc = __revit__.ActiveUIDocument.Document
@@ -28,26 +28,38 @@ active_view = uidoc.ActiveGraphicalView
 
 directions = ["Looking West", "Looking North", "Looking East", "Looking South"]
 
+# tb_name_pt1 = "B - TB"
+# tb_name_pt2 = "30x42"
+
+tb_name_pt1 = "SG_TB_CD_NYPCC"
+tb_name_pt2 = "36X48"
+
+scale = 32
+sheet_spacing = 2 / 12 # 2 inches??
+
 view_family_types = list(FilteredElementCollector(doc).OfClass(ViewFamilyType))
 view_types_map = {}
 titleblock_types = list(FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_TitleBlocks).WhereElementIsElementType())
-default_titleblock = [t for t in titleblock_types if "B - TB" in t.FamilyName and "30x42" in t.FamilyName][0] # add selector later for titleblock family
+default_titleblock = [t for t in titleblock_types if tb_name_pt1 in t.FamilyName and tb_name_pt2 in t.GetParameters("Type Name")[0].AsValueString()][0] # add selector later for titleblock family
+
+rooms_category = Category.GetCategory(doc, BuiltInCategory.OST_Rooms)
 
 for vft in view_family_types:
     name = Element.Name.__get__(vft)
     view_types_map[name] = vft
 
-if "IE - Interior Elevation" in view_types_map:
-    elev_view_type = view_types_map["IE - Interior Elevation"]
+if "SG_interior Elevation" in view_types_map:
+    elev_view_type = view_types_map["SG_interior Elevation"]
 else:
     elev_view_type = [vft for vft in view_family_types if "Elevation" in vft.FamilyName][0]
 
-plan_view_type = view_types_map["Floor Plan"]
-rcp_view_type = view_types_map["Ceiling Plan"]
+plan_view_type = view_types_map["SG_Floor Plan"]
+rcp_view_type = view_types_map["SG_Ceiling Plan"]
+# plan_view_type = view_types_map["Floor Plan"]
+# rcp_view_type = view_types_map["Ceiling Plan"]
 threeD_view_type = view_types_map["3D View"]
 
-scale = 48
-sheet_spacing = 2 / 12 # 2 inches??
+
 
 forms.alert("Select the rooms to elevate",
     title="Select Rooms",
@@ -59,21 +71,6 @@ forms.alert("Select the rooms to elevate",
 picked_refs = uidoc.Selection.PickObjects(ObjectType.Element)
 picked_rooms = [doc.GetElement(ref) for ref in picked_refs if doc.GetElement(ref).Category.Name == "Rooms"]
 
-# xamlfile = script.get_bundle_file('elevsbyroom_ui.xaml')
-
-# class ToolWindow(Windows.Window):
-    # def __init__(self):
-        # wpf.LoadComponent(self, xamlfile)
-
-#rooms = list(FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_Rooms))
-#views = list(FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_Views))
-#plans = [v for v in views if v.ViewType == ViewType.FloorPlan]
-
-#plan_dict = {plan.Name: plan for plan in plans}
-#room_dict = {}
-#for room in rooms:
-#    key = '{num} - {name}'.format(num = room.Number, name = room.GetParamters('Name')[0].AsValueString())
-#    room_dict[key] = {"room_element": room, "level_name": room.Level.Name}
 
 t = Transaction(doc, "Create Elevations from Picked Rooms")
 t.Start()
@@ -99,7 +96,7 @@ vertical_offset = XYZ(0, 0.25, 0) #offsets upward
 
 #sheet coordinates
 sheet_origin = XYZ(0,0,0)
-titleblock_origin = XYZ(3.27, 0.06, 0)
+titleblock_origin = XYZ(2.66135, 0.23664, 0)
 default_view_origin = sheet_origin.Add(titleblock_origin).Add(horizontal_offset).Add(vertical_offset)
 
 
@@ -128,31 +125,22 @@ for room in picked_rooms:
     plan_views = [plan, rcp]
     
     for view in plan_views:
+        view.ViewTemplateId = ElementId(-1)
+        view.AreAnnotationCategoriesHidden = True
         view.CropBoxActive = True
         crop_man = view.GetCropRegionShapeManager()
         crop_man.SetCropShape(expanded_plan_boundary)
-        anno_crop_param = plan.GetParameters("Annotation Crop")[0]
+        anno_crop_param = view.GetParameters("Annotation Crop")[0]
         anno_crop_param.Set(1) # 1 == True, turn on annotation crop
         crop_man.BottomAnnotationCropOffset = anno_crop_offset
         crop_man.LeftAnnotationCropOffset = anno_crop_offset
         crop_man.TopAnnotationCropOffset = anno_crop_offset
         crop_man.RightAnnotationCropOffset = anno_crop_offset
         view.Scale = scale
+
         
     
-    threeD = View3D.CreateIsometric(doc, threeD_view_type.Id)
-    threeD.Name = "A-3D - " +  room_key
-    bounding_box = room.BoundingBox[threeD]
-    offset_3d = XYZ(1,1,1)
-    bounding_box.Max = bounding_box.Max.Add(offset_3d)
-    bounding_box.Min = bounding_box.Min.Subtract(offset_3d)
-    threeD.SetSectionBox(bounding_box)
-    threeD.Scale = scale
-    
-    eye_pos = pt.Add(eye_relative)
-    view_orientation = ViewOrientation3D(eye_pos, upward, forward)
-    threeD.SetOrientation(view_orientation)
-    threeD.SaveOrientation()
+
     
     elev_marker = ElevationMarker.CreateElevationMarker(doc, elev_view_type.Id, pt, scale)
     
@@ -166,63 +154,112 @@ for room in picked_rooms:
                                 "room_element": room,
                                 "plan": plan,
                                 "rcp": rcp,
-                                "elevations": [],
+                                "elevations": list(),
                                 "sheet": sheet,
-                                "3d": threeD,
+                                "3d": None,
                                 }
     
     
-    for i in range(4):
+    for i in range(len(directions)):
         elev_name = room_key + " " + directions[i]
         elev = elev_marker.CreateElevation(doc, plan.Id, i)
+        elev.ViewTemplateId = ElementId(-1)
         elev.Name = elev_name
+        elev.AreAnnotationCategoriesHidden = True
+        elev.AreImportCategoriesHidden = True
+        # elev.IsolateCategoryTemporary(rooms_category.Id)
+        elev.Scale = scale
+        
+        elev.SetCategoryHidden(rooms_category.Id, False) 
+        bb = room.BoundingBox[elev]
+        room_shape = get_shape_from_boundingbox(bb)
+        plane = room_shape.GetPlane()
+        normal = plane.Normal
+        # print("room shape len:", room_shape.GetExactLength())
+        # print("roomshape w,h", room_shape.GetRectangularWidth(plane), room_shape.GetRectangularHeight(plane))
+        # print("roomshape ccw?", room_shape.IsCounterclockwise(normal))
+        elev_cropman = elev.GetCropRegionShapeManager()
+        
+        newshape = CurveLoop.CreateViaOffset(room_shape, 1, normal)
+        # print("new shape len:", newshape.GetExactLength())
+        # print("new w,h", newshape.GetRectangularWidth(plane), newshape.GetRectangularHeight(plane))
+        # print("new shape ccw?", newshape.IsCounterclockwise(normal))
+        elev_cropman.SetCropShape(newshape)
+        print("crop valid?", elev_cropman.IsCropRegionShapeValid(newshape))
         
         views_by_room[room_key]["elevations"].append(elev)
         
-        # elev_cropman = elev.GetCropRegionShapeManager()
-        # shape = elev_cropman.GetCropShape()[0]
-        # plane = shape.GetPlane()
-        # normal = plane.Normal
-        # newshape = CurveLoop.CreateViaOffset(shape, 1, normal)
-        # elev_cropman.SetCropShape(newshape)
+        elev_cropman.Dispose()
+        newshape.Dispose()
+        bb.Dispose()
+        room_shape.Dispose()
+    
+    elev_marker.Dispose()
+        
+    threeD = View3D.CreateIsometric(doc, threeD_view_type.Id)
+    threeD.Name = "A-3D - " +  room_key
+    bounding_box = room.BoundingBox[threeD]
+    offset_3d = XYZ(1,1,1)
+    bounding_box.Max = bounding_box.Max.Add(offset_3d)
+    bounding_box.Min = bounding_box.Min.Subtract(offset_3d)
+    threeD.SetSectionBox(bounding_box)
+    threeD.Scale = scale
+    threeD.AreAnnotationCategoriesHidden = True
+    threeD.CropBoxActive = True
+    #threeD.SetCategoryHidden(scope_box.Id, True) #scope boxed not defined in api?
+    
+    eye_pos = pt.Add(eye_relative)
+    view_orientation = ViewOrientation3D(eye_pos, upward, forward)
+    threeD.SetOrientation(view_orientation)
+    threeD.SaveOrientation()
+    
+    threeD_cropbox_from_room(threeD, room)
+    
+    views_by_room[room_key]['3d'] = threeD
 
 for room_views in views_by_room.values():
-    for elev in room_views['elevations']:
-        elev_cropman = elev.GetCropRegionShapeManager()
-        shape = elev_cropman.GetCropShape()[0]
-        plane = shape.GetPlane()
-        normal = plane.Normal
-        newshape = CurveLoop.CreateViaOffset(shape, 1, normal)
-        elev_cropman.SetCropShape(newshape)
-        elev.AreAnnotationCategoriesHidden = True
+    room = room_views['room_element']
+    print(room_views['name'])
     
-    viewtypes = ['plan', 'rcp', '3d', 'elevations']
-    
-    for viewtype in viewtypes:
-        if viewtype != 'elevations':
-            room_views[viewtype].AreAnnotationCategoriesHidden = True
-        else:
-            for view in room_views[viewtype]:
-                view.AreAnnotationCategoriesHidden = True
+    sheet = room_views['sheet']
     
     plan_helper = ViewportHelper(room_views['plan'], scale)
     rcp_helper = ViewportHelper(room_views['rcp'], scale)
     
+    plan_viewport = plan_helper.place_at(sheet, default_view_origin)
+    rcp_viewport = rcp_helper.place_relative_to(sheet, default_view_origin, [plan_helper.height_vector, vertical_offset])
     
-    # plan_viewport_diagonal = room_views['plan'].CropBox.Max.Subtract(room_views['plan'].CropBox.Min).Divide(scale)
-    # plan_viewport_half_diagonal = plan_viewport_diagonal.Divide(2)
-    # plan_viewport_placement = XYZ_element_multiply(plan_viewport_half_diagonal, XYZ(-1,1,0))
+    elev_west_helper =  ViewportHelper(room_views['elevations'][0], scale)
+    # print("west:  ", elev_west_helper.viewport_placement.ToString())
+    elev_north_helper = ViewportHelper(room_views['elevations'][1], scale)
+    # print("north: ", elev_north_helper.viewport_placement.ToString())
+    elev_east_helper =  ViewportHelper(room_views['elevations'][2], scale)
+    # print("east:  ", elev_east_helper.viewport_placement.ToString())
+    elev_south_helper = ViewportHelper(room_views['elevations'][3], scale)
+    # print("south: ", elev_south_helper.viewport_placement.ToString())
     
-    # plan_diagonal = room_views['plan'].CropBox.Max.Subtract(room_views['plan'].CropBox.Min)
-    # plan_half_diagonal = plan_diagonal.Divide(2)
-    # plan_half_diagonal_scaled = plan_half_diagonal.Divide(scale)
-    # plan_placement = XYZ_element_multiply(plan_half_diagonal_scaled, XYZ(-1,1,0))
+    # elev_south_viewport = elev_south_helper.place_relative_to(sheet, default_view_origin, [- plan_helper.width_vector, horizontal_offset])
+    # elev_east_viewport = elev_east_helper.place_relative_to(sheet, elev_south_helper.viewport_ref, [- elev_south_helper.width_vector, horizontal_offset])
+    # elev_north_viewport = elev_north_helper.place_relative_to(sheet, elev_south_helper.viewport_ref, [elev_south_helper.height_vector, vertical_offset])
+    # elev_west_viewport = elev_west_helper.place_relative_to(sheet, elev_north_helper.viewport_ref, [- elev_north_helper.width_vector, horizontal_offset])
+    elev_east_viewport = elev_east_helper.place_relative_to(sheet, 
+                                                            default_view_origin, 
+                                                            [-plan_helper.width_vector, horizontal_offset])
+    elev_north_viewport = elev_north_helper.place_relative_to(sheet, 
+                                                            elev_east_helper.viewport_ref, 
+                                                            [- elev_east_helper.width_vector, horizontal_offset])
+    elev_west_viewport = elev_west_helper.place_relative_to(sheet, 
+                                                            elev_east_helper.viewport_ref, 
+                                                            [elev_east_helper.height_vector, vertical_offset])
+    elev_south_viewport = elev_south_helper.place_relative_to(sheet, 
+                                                            elev_west_helper.viewport_ref, 
+                                                            [- elev_west_helper.width_vector, horizontal_offset])
     
-    # plan_viewport_origin = default_view_origin.Add(plan_viewport_placement)
-    # plan_viewport = Viewport.Create(doc, room_views['sheet'].Id, room_views['plan'].Id, plan_viewport_origin)
+    threeD_helper = ViewportHelper(room_views['3d'], scale)
+    threeD_viewport = threeD_helper.place_relative_to(sheet,
+                                                        elev_north_helper.viewport_ref,
+                                                        [- elev_north_helper.width_vector, horizontal_offset])
     
-    plan_viewport = plan_helper.place_at(room_views['sheet'], default_view_origin)
-    rcp_viewport = rcp_helper.place_relative_to(room_views['sheet'], default_view_origin, [plan_helper.height_vector, vertical_offset])
     
     # rcp_viewport_origin = translate_Y(default_view_origin, plan_viewport_diagonal.Y).Add(vertical_offset).Add(plan_viewport_placement)
     # rcp_viewport = Viewport.Create(doc, room_views['sheet'].Id, room_views['rcp'].Id, rcp_viewport_origin)
