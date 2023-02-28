@@ -18,7 +18,7 @@ import wpf
 from System import Windows
 from System.Collections.Generic import IList, List
 
-from xyz_utilities import XYZ_element_multiply, translate_X, translate_Y, get_shape_from_boundingbox, threeD_cropbox_from_room
+from xyz_utilities import XYZ_element_multiply, translate_X, translate_Y, get_shape_from_boundingbox, threeD_cropbox_from_room, offset_curveLoop_outward
 from viewport_utilities import ViewportHelper, iterate_sheet_number
 
 doc = __revit__.ActiveUIDocument.Document
@@ -28,6 +28,7 @@ active_view = uidoc.ActiveGraphicalView
 
 directions = ["Looking West", "Looking North", "Looking East", "Looking South"]
 
+### alternate titleblock info for use with different project templates
 # tb_name_pt1 = "B - TB"
 # tb_name_pt2 = "30x42"
 
@@ -55,11 +56,19 @@ else:
 
 plan_view_type = view_types_map["SG_Floor Plan"]
 rcp_view_type = view_types_map["SG_Ceiling Plan"]
+### alternate view type names for use with different project template
 # plan_view_type = view_types_map["Floor Plan"]
 # rcp_view_type = view_types_map["Ceiling Plan"]
 threeD_view_type = view_types_map["3D View"]
 
+class RoomFilter(ISelectionFilter):
+    def AllowElement(self, element):
+        if element.Category.Name == "Rooms":
+            return True
+        else:
+            return False
 
+roomFilter = RoomFilter()
 
 forms.alert("Select the rooms to elevate",
     title="Select Rooms",
@@ -68,8 +77,8 @@ forms.alert("Select the rooms to elevate",
     exitscript=True,
     )
 
-picked_refs = uidoc.Selection.PickObjects(ObjectType.Element)
-picked_rooms = [doc.GetElement(ref) for ref in picked_refs if doc.GetElement(ref).Category.Name == "Rooms"]
+picked_refs = uidoc.Selection.PickObjects(ObjectType.Element, roomFilter, "Select one or more Rooms, then click 'Finish'.")
+picked_rooms = [doc.GetElement(ref) for ref in picked_refs] # if doc.GetElement(ref).Category.Name == "Rooms"]
 
 if len(picked_rooms) > 0:
     initial_sheet = forms.ask_for_string(
@@ -84,8 +93,6 @@ if len(picked_rooms) > 0:
     t.Start()
 
     sebo = SpatialElementBoundaryOptions()
-    elevations = []
-
     views_by_room = {}
 
     #view orientation vectors
@@ -103,8 +110,10 @@ if len(picked_rooms) > 0:
     sheet_origin = XYZ(0,0,0)
     titleblock_origin = XYZ(2.66135, 0.23664, 0)
     default_view_origin = sheet_origin.Add(titleblock_origin).Add(horizontal_offset).Add(vertical_offset)
-
-
+    
+    ##########################
+    ### view creation loop ###
+    ##########################
     for room in sorted(picked_rooms, key = lambda room: room.Number):
         sheet_number = next(sheet_numbers)
         name = room.GetParameters("Name")[0].AsValueString()
@@ -112,13 +121,13 @@ if len(picked_rooms) > 0:
         room_key = "{name} - {number}".format(name=name, number=number)
         pt = room.Location.Point
 
-        room_boundary_segments = room.GetBoundarySegments(sebo)[0] #Get first boundary curveloop - may need to be modified 
+        room_boundary_segments = room.GetBoundarySegments(sebo)[0] #Get first boundary curveloop
         boundary_curves = [seg.GetCurve() for seg in room_boundary_segments]
         curve_loop = CurveLoop.Create(List[Curve](boundary_curves))
         plane = curve_loop.GetPlane()
         normal = plane.Normal
         
-        expanded_plan_boundary = CurveLoop.CreateViaOffset(curve_loop, -3.5, normal)
+        expanded_plan_boundary = offset_curveLoop_outward(curve_loop, 3.5)
         
         level = room.Level
         
@@ -159,7 +168,6 @@ if len(picked_rooms) > 0:
                                     "3d": None,
                                     }
         
-        
         for i in range(len(directions)):
             elev_name = room_key + " " + directions[i]
             elev = elev_marker.CreateElevation(doc, plan.Id, i)
@@ -178,14 +186,14 @@ if len(picked_rooms) > 0:
             
             newshape = CurveLoop.CreateViaOffset(room_shape, 1, normal)
             elev_cropman.SetCropShape(newshape)
-            print("crop valid?", elev_cropman.IsCropRegionShapeValid(newshape))
-            
+                        
             views_by_room[room_key]["elevations"].append(elev)
             
             elev_cropman.Dispose()
             newshape.Dispose()
             bb.Dispose()
             room_shape.Dispose()
+            print(elev.CropBox.Max.ToString(), elev.CropBox.Min.ToString())
         
         elev_marker.Dispose()
             
@@ -206,9 +214,14 @@ if len(picked_rooms) > 0:
         threeD.SaveOrientation()
         
         threeD_cropbox_from_room(threeD, room)
-        
         views_by_room[room_key]['3d'] = threeD
+        
+    ### if the code in the below loop is moved into the previous loop (view creation and placement together) then the placement
+    ### error happens to ALL sheets, not just the final sheet. 
 
+    ###########################
+    ### view placement loop ###
+    ###########################
     for room_views in views_by_room.values():
         room = room_views['room_element']
         
@@ -236,13 +249,11 @@ if len(picked_rooms) > 0:
                                                                 [elev_east_helper.height_vector, vertical_offset])
         elev_south_viewport = elev_south_helper.place_relative_to(sheet, 
                                                                 elev_west_helper.viewport_ref, 
-                                                                [- elev_west_helper.width_vector, horizontal_offset])
-        
+                                                                [- elev_west_helper.width_vector, horizontal_offset])        
         threeD_helper = ViewportHelper(room_views['3d'], scale)
         threeD_viewport = threeD_helper.place_relative_to(sheet,
                                                             elev_north_helper.viewport_ref,
                                                             [- elev_north_helper.width_vector, horizontal_offset])
-        
 
     t.Commit()
 

@@ -13,9 +13,10 @@ class ViewportHelper:
         self.view = view
         self.scale = scale
     
-        self.viewport_diagonal = self.view.CropBox.Max.Subtract(self.view.CropBox.Min).Divide(self.scale)
-        # print("cb max:", self.view.CropBox.Max.ToString(), "cb min:", self.view.CropBox.Min.ToString())
-        # print(self.view.Name, "diagonal: ", self.viewport_diagonal.ToString())
+        # self.viewport_diagonal = self.view.CropBox.Max.Subtract(self.view.CropBox.Min).Divide(self.scale)
+        self.viewport_diagonal = (self.view.CropBox.Max - self.view.CropBox.Min) / self.scale
+        print("cb max:", self.view.CropBox.Max.ToString(), "cb min:", self.view.CropBox.Min.ToString())
+        print(self.view.Name, "diagonal: ", self.viewport_diagonal.ToString())
         self.viewport_half_diagonal = self.viewport_diagonal.Divide(2)
         self.viewport_placement = XYZ_element_multiply(self.viewport_half_diagonal, XYZ(-1,1,0))
         

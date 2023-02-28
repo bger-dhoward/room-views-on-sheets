@@ -106,6 +106,13 @@ def threeD_cropbox_from_room(view, room):
     dx = 0.05 * (xMax - xMin)
     dy = 0.05 * (yMax - yMin)
     
+    min_offset = 2
+    
+    if dx < min_offset:
+        dx = min_offset
+    if dy < min_offset:
+        dy = min_offset
+    
     xMin -= dx
     xMax += dx
     
@@ -116,4 +123,26 @@ def threeD_cropbox_from_room(view, room):
     bb.Min = XYZ(xMin, yMin, bb.Min.Z)
     
     view.CropBox = bb
+
+
+def offset_curveLoop_outward(curveLoop, offset):
+    orig_length = curveLoop.GetExactLength()
+    plane = curveLoop.GetPlane()
+    normal = plane.Normal
     
+    try:
+        cl_plus = CurveLoop.CreateViaOffset(curveLoop, offset, normal)
+    except Exception as e:
+        try:
+            cl_plus = CurveLoop.CreateViaOffset(curveLoop, -offset, normal)
+        except:
+            print("Error in offsetting room boundary. Using original boundary instead.")
+            return curveLoop
+        
+    
+    
+    if cl_plus.GetExactLength() > orig_length:
+        return cl_plus
+    else:
+        cl_minus = CurveLoop.CreateViaOffset(curveLoop, -offset, normal)
+        return cl_minus
